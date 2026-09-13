@@ -53,6 +53,60 @@ function createDynamicIcon(count) {
   return nativeImage.createFromBuffer(buffer, { width, height });
 }
 
+function createTriangleIcon(count) {
+  const width = 16;
+  const height = 16;
+  const buffer = Buffer.alloc(width * height * 4);
+
+  // Grey (#808080) for 0 unread; Bright Google Voice Green (#00C853) for >0
+  const hex = count > 0 ? '#00C853' : '#808080';
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+
+  // Draw upside down triangle
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const idx = (y * width + x) * 4;
+      
+      // Upside down triangle: base at top, point at bottom
+      const topY = 2;
+      const bottomY = 14;
+      const leftX = 2;
+      const rightX = 14;
+      
+      // Check if point is inside triangle
+      const relY = y - topY;
+      const triangleHeight = bottomY - topY;
+      
+      if (relY >= 0 && relY <= triangleHeight) {
+        // Width at this Y level decreases as we go down
+        const widthAtY = (rightX - leftX) * (1 - relY / triangleHeight) / 2;
+        const centerX = 7.5;
+        const minX = centerX - widthAtY;
+        const maxX = centerX + widthAtY;
+        
+        if (x >= minX && x <= maxX) {
+          let alpha = 255;
+          // Smooth edges
+          if (x < minX + 1) {
+            alpha = Math.round((x - minX + 1) * 255);
+          } else if (x > maxX - 1) {
+            alpha = Math.round((maxX - x + 1) * 255);
+          }
+          
+          buffer[idx] = r;
+          buffer[idx + 1] = g;
+          buffer[idx + 2] = b;
+          buffer[idx + 3] = Math.min(alpha, 255);
+        }
+      }
+    }
+  }
+
+  return nativeImage.createFromBuffer(buffer, { width, height });
+}
+
 const domPollerScript = `
   setInterval(() => {
     let messagesCount = 0;
@@ -181,7 +235,7 @@ function createTray() {
   });
 
   // Voicemail Tray Icon
-  voicemailTray = new Tray(createDynamicIcon(0));
+  voicemailTray = new Tray(createTriangleIcon(0));
   voicemailTray.setToolTip('Google Voice - Voicemail');
 
   const voicemailMenu = Menu.buildFromTemplate([
@@ -220,7 +274,7 @@ ipcMain.on('update-unread-counts', (event, messagesCount, voicemailCount) => {
   }
 
   // Update Voicemail Icon
-  voicemailTray.setImage(createDynamicIcon(voicemailCount));
+  voicemailTray.setImage(createTriangleIcon(voicemailCount));
   if (voicemailCount > 0) {
     voicemailTray.setToolTip(`Google Voice - Voicemail: ${voicemailCount} unread`);
   } else {

@@ -117,8 +117,40 @@ function createWindow() {
 
 function createTray() {
   const navigateScript = (tab) => `
-    const nav = document.querySelector('[gv-test-id="sidenav-${tab}"]');
-    if (nav) nav.click();
+    (() => {
+      try {
+        // Wait a bit for page to be ready if needed
+        const tryClick = () => {
+          // Try primary selector
+          let nav = document.querySelector('[gv-test-id="sidenav-${tab}"]');
+          
+          // Try alternative selectors
+          if (!nav) {
+            const tabLabel = '${tab}' === 'messages' ? 'Messages' : 'Voicemail';
+            nav = Array.from(document.querySelectorAll('[role="button"]'))
+              .find(el => el.textContent.includes(tabLabel));
+          }
+          
+          if (!nav) {
+            nav = Array.from(document.querySelectorAll('a, button, [role="tab"]'))
+              .find(el => el.textContent.includes('${tab}' === 'messages' ? 'Messages' : 'Voicemail'));
+          }
+          
+          if (nav) {
+            nav.click();
+            return true;
+          }
+          return false;
+        };
+        
+        if (!tryClick() && performance.now() < 5000) {
+          setTimeout(tryClick, 500);
+        }
+      } catch (e) {
+        console.error('Navigation error:', e);
+      }
+    })();
+    void 0;
   `;
 
   // Messages Tray Icon

@@ -5,7 +5,10 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win portable"
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win portable",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux"
   },
   "build": {
     "appId": "com.googlevoice.trayapp",
@@ -18,6 +21,26 @@
     },
     "portable": {
       "artifactName": "GoogleVoiceTray.exe"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.utilities"
+    },
+    "dmg": {
+      "artifactName": "GoogleVoiceTray.dmg"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility"
+    },
+    "appImage": {
+      "artifactName": "GoogleVoiceTray.AppImage"
     },
     "files": [
       "main.js",

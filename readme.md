@@ -1,12 +1,13 @@
 # Google Voice System Tray App
 
-A lightweight, portable Windows system tray wrapper for Google Voice built with Electron. The application runs quietly in the Windows Taskbar System Tray with **dual independent tray icons** — one for Messages and one for Voicemail. Persists your Google authentication session and dynamically updates tray icon colors based on unread messages/voicemails.
+A lightweight, cross-platform system tray wrapper for Google Voice built with Electron. Available for **Windows**, **macOS**, and **Linux**. The application runs quietly in your system tray with **dual independent tray icons** — one for Messages and one for Voicemail. Persists your Google authentication session and dynamically updates tray icon colors based on unread messages/voicemails.
 
 ---
 
 ## Key Features
 
-* **Dual System Tray Icons:** Two separate icons in the Windows System Tray, each with independent functionality:
+* **Cross-Platform Support:** Works on Windows, macOS, and Linux
+* **Dual System Tray Icons:** Two separate icons in your system tray, each with independent functionality:
   * **Messages Icon** — Circle icon showing unread message count
   * **Voicemail Icon** — Upside-down triangle icon showing unread voicemail count
 * **Smart Navigation:** Click either icon to open Google Voice and automatically navigate to the corresponding tab (Messages or Voicemail)
@@ -44,3 +45,39 @@ google-voice-tray/
 ├── preload.js       # Context bridge for secure IPC communication
 ├── package.json     # Node project & electron-builder configuration
 └── README.md        # Project documentation
+```
+
+---
+
+## Build & Installation
+
+### Prerequisites
+- Node.js v18+ and npm installed
+- Run `npm install` to install dependencies
+
+### Build Commands
+
+**Build for current platform:**
+```bash
+npm run dist
+```
+
+**Build for specific platforms:**
+```bash
+npm run dist:win      # Windows (portable EXE)
+npm run dist:mac      # macOS (DMG + ZIP)
+npm run dist:linux    # Linux (AppImage + DEB)
+```
+
+### Output Files
+- **Windows:** `dist/GoogleVoiceTray.exe` (portable executable)
+- **macOS:** `dist/GoogleVoiceTray.dmg` and `dist/GoogleVoiceTray.zip`
+- **Linux:** `dist/GoogleVoiceTray.AppImage` and `dist/GoogleVoiceTray.deb`
+
+### Running Locally
+```bash
+npm start
+```
+
+### Note on Cross-Platform Building
+You can only build for your current OS from Windows. To build for macOS or Linux, run the build commands on those respective operating systems. However, you can commit these updated build configurations so anyone on macOS or Linux can run the builds.

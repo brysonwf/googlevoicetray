@@ -1,5 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  sendUnreadCount: (count) => ipcRenderer.send('update-unread-count', count)
+  sendUnreadCounts: (messagesCount, voicemailCount) => ipcRenderer.send('update-unread-counts', messagesCount, voicemailCount)
 });

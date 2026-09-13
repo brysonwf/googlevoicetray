@@ -2,7 +2,8 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage } = require('electr
 const path = require('path');
 
 let mainWindow;
-let tray;
+let messagesTray;
+let voicemailTray;
 
 // Custom CSS injected into Google Voice
 const customCSS = `
@@ -54,22 +55,31 @@ function createDynamicIcon(count) {
 
 const domPollerScript = `
   setInterval(() => {
-    let unreadCount = 0;
-    const targets = ['sidenav-messages', 'sidenav-voicemail'];
+    let messagesCount = 0;
+    let voicemailCount = 0;
     
-    targets.forEach(testId => {
-      const navItem = document.querySelector(\`[gv-test-id="\${testId}"]\`);
-      if (navItem) {
-        const badge = navItem.querySelector('.mat-badge-content:not(.mat-badge-hidden)');
-        if (badge && badge.textContent) {
-          const val = parseInt(badge.textContent.trim(), 10);
-          if (!isNaN(val)) unreadCount += val;
-        }
+    // Get messages count
+    const messagesNav = document.querySelector('[gv-test-id="sidenav-messages"]');
+    if (messagesNav) {
+      const badge = messagesNav.querySelector('.mat-badge-content:not(.mat-badge-hidden)');
+      if (badge && badge.textContent) {
+        const val = parseInt(badge.textContent.trim(), 10);
+        if (!isNaN(val)) messagesCount = val;
       }
-    });
+    }
+    
+    // Get voicemail count
+    const voicemailNav = document.querySelector('[gv-test-id="sidenav-voicemail"]');
+    if (voicemailNav) {
+      const badge = voicemailNav.querySelector('.mat-badge-content:not(.mat-badge-hidden)');
+      if (badge && badge.textContent) {
+        const val = parseInt(badge.textContent.trim(), 10);
+        if (!isNaN(val)) voicemailCount = val;
+      }
+    }
 
     if (window.electronAPI) {
-      window.electronAPI.sendUnreadCount(unreadCount);
+      window.electronAPI.sendUnreadCounts(messagesCount, voicemailCount);
     }
   }, 1000);
 `;
@@ -106,11 +116,21 @@ function createWindow() {
 }
 
 function createTray() {
-  tray = new Tray(createDynamicIcon(0));
-  tray.setToolTip('Google Voice');
+  const navigateScript = (tab) => `
+    const nav = document.querySelector('[gv-test-id="sidenav-${tab}"]');
+    if (nav) nav.click();
+  `;
 
-  const contextMenu = Menu.buildFromTemplate([
-    { label: 'Open Google Voice', click: () => mainWindow.show() },
+  // Messages Tray Icon
+  messagesTray = new Tray(createDynamicIcon(0));
+  messagesTray.setToolTip('Google Voice - Messages');
+
+  const messagesMenu = Menu.buildFromTemplate([
+    { label: 'Open Messages', click: () => {
+      mainWindow.show();
+      mainWindow.focus();
+      mainWindow.webContents.executeJavaScript(navigateScript('messages'));
+    }},
     { type: 'separator' },
     { 
       label: 'Quit App', 
@@ -121,25 +141,58 @@ function createTray() {
     }
   ]);
 
-  tray.setContextMenu(contextMenu);
-  tray.on('click', () => {
-    if (mainWindow.isVisible()) {
-      mainWindow.hide();
-    } else {
+  messagesTray.setContextMenu(messagesMenu);
+  messagesTray.on('click', () => {
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.executeJavaScript(navigateScript('messages'));
+  });
+
+  // Voicemail Tray Icon
+  voicemailTray = new Tray(createDynamicIcon(0));
+  voicemailTray.setToolTip('Google Voice - Voicemail');
+
+  const voicemailMenu = Menu.buildFromTemplate([
+    { label: 'Open Voicemail', click: () => {
       mainWindow.show();
       mainWindow.focus();
+      mainWindow.webContents.executeJavaScript(navigateScript('voicemail'));
+    }},
+    { type: 'separator' },
+    { 
+      label: 'Quit App', 
+      click: () => {
+        app.isQuitting = true;
+        app.quit();
+      } 
     }
+  ]);
+
+  voicemailTray.setContextMenu(voicemailMenu);
+  voicemailTray.on('click', () => {
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.executeJavaScript(navigateScript('voicemail'));
   });
 }
 
-ipcMain.on('update-unread-count', (event, count) => {
-  if (!tray) return;
+ipcMain.on('update-unread-counts', (event, messagesCount, voicemailCount) => {
+  if (!messagesTray || !voicemailTray) return;
 
-  tray.setImage(createDynamicIcon(count));
-  if (count > 0) {
-    tray.setToolTip(\`Google Voice: \${count} unread\`);
+  // Update Messages Icon
+  messagesTray.setImage(createDynamicIcon(messagesCount));
+  if (messagesCount > 0) {
+    messagesTray.setToolTip(`Google Voice - Messages: ${messagesCount} unread`);
   } else {
-    tray.setToolTip('Google Voice - No unread messages');
+    messagesTray.setToolTip('Google Voice - Messages');
+  }
+
+  // Update Voicemail Icon
+  voicemailTray.setImage(createDynamicIcon(voicemailCount));
+  if (voicemailCount > 0) {
+    voicemailTray.setToolTip(`Google Voice - Voicemail: ${voicemailCount} unread`);
+  } else {
+    voicemailTray.setToolTip('Google Voice - Voicemail');
   }
 });
 

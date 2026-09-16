@@ -19,7 +19,7 @@ A lightweight, cross-platform system tray wrapper for Google Voice built with El
 * **Session Persistence:** Saves your Google Voice login session across computer restarts.
 * **Context Menus:** Right-click either tray icon for quick access to open specific tabs or quit the app.
 * **iPhone SE Layout:** Opens Google Voice with a 375x667 content viewport so its narrow responsive layout is used without changing browser compatibility.
-* **Tray Positioning:** Places the window above the Windows notification area, with a small clearance above the taskbar, on the display containing the tray icon.
+* **Tray Positioning:** Places the window in the bottom-right corner of the display containing the tray icon, with a small clearance above the taskbar.
 
 The app keeps the native Windows frame. A frameless/custom frame is possible, but it would require a custom draggable title bar and window controls because the Google Voice page cannot provide those controls safely.
 

@@ -218,11 +218,7 @@ function positionWindowNearTray() {
   });
   const workArea = display.workArea;
   const [windowWidth, windowHeight] = mainWindow.getSize();
-  const trayCenter = trayBounds.x + Math.round(trayBounds.width / 2);
-  const x = Math.max(
-    workArea.x,
-    Math.min(trayCenter - Math.round(windowWidth / 2), workArea.x + workArea.width - windowWidth)
-  );
+  const x = workArea.x + workArea.width - windowWidth;
   const y = Math.max(
     workArea.y,
     workArea.y + workArea.height - windowHeight - TASKBAR_CLEARANCE

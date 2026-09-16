@@ -17,11 +17,12 @@ A lightweight, cross-platform system tray wrapper for Google Voice built with El
 * **Single Instance Locking:** Prevents multiple copies of the application from running simultaneously.
 * **Smart DOM Polling:** Automatically queries Google Voice UI every second, separately counting `Messages` and `Voicemail` unread items.
 * **Session Persistence:** Saves your Google Voice login session across computer restarts.
-* **Context Menus:** Right-click either tray icon for quick access to open specific tabs or quit the app.
+* **Context Menus:** Right-click a tray icon to open its window, change icon visibility, configure auto-open, or quit the app.
+* **Configurable Tray Icons:** Google Voice, Google Messages, and Google Chat icons can be turned off individually; at least one icon must remain enabled.
 * **iPhone SE Layout:** Opens Google Voice with a 375x667 content viewport so its narrow responsive layout is used without changing browser compatibility.
 * **Tray Positioning:** Places the window in the bottom-right corner of the display containing the tray icon, with a small clearance above the taskbar.
 
-The app keeps the native Windows frame. A frameless/custom frame is possible, but it would require a custom draggable title bar and window controls because the Google Voice page cannot provide those controls safely.
+The app uses a frameless window with a custom drawer edge, shadow, and rounded corners. It is fixed-size and controlled from the system tray.
 
 ---
 

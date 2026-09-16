@@ -1,20 +1,75 @@
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen } = require('electron');
+const fs = require('fs');
 const path = require('path');
 
 let mainWindow;
+let chatWindow;
 let messagesTray;
 let voicemailTray;
+let chatTray;
 let activeTab;
+let autoOpenEnabled = true;
+let previousMessagesCount = 0;
+let previousVoicemailCount = 0;
+let unreadCountsInitialized = false;
+let autoOpenMenuItems = [];
+let showTabForAutoOpen;
+const topResizeStates = new Map();
+const traySettings = {
+  voice: true,
+  messages: true,
+  chat: true
+};
 
 const MOBILE_VIEWPORT = { width: 375, height: 667 };
+const CHAT_VIEWPORT = { width: MOBILE_VIEWPORT.width * 2, height: MOBILE_VIEWPORT.height };
 const TASKBAR_CLEARANCE = 8;
+const SCREEN_EDGE_CLEARANCE = 12;
 const IPHONE_SE_USER_AGENT = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+const CHAT_DESKTOP_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+const MIN_WINDOW_HEIGHT = 320;
+
+function getSettingsPath() {
+  return path.join(app.getPath('userData'), 'settings.json');
+}
+
+function loadSettings() {
+  try {
+    const settings = JSON.parse(fs.readFileSync(getSettingsPath(), 'utf8'));
+    autoOpenEnabled = settings.autoOpenEnabled !== false;
+    traySettings.voice = settings.traySettings?.voice !== false;
+    traySettings.messages = settings.traySettings?.messages !== false;
+    traySettings.chat = settings.traySettings?.chat !== false;
+  } catch {
+    autoOpenEnabled = true;
+  }
+}
+
+function saveSettings() {
+  fs.writeFileSync(getSettingsPath(), JSON.stringify({ autoOpenEnabled, traySettings }, null, 2));
+}
+
+function enabledTrayCount() {
+  return Object.values(traySettings).filter(Boolean).length;
+}
 
 // Custom CSS injected into Google Voice
 const customCSS = `
   /* Hide promo banners */
   .gv-promo-banner { display: none !important; }
 
+  /* Give the frameless window a compact Windows drawer edge */
+  html,
+  body {
+    overflow: hidden !important;
+  }
+
+  body {
+    border: 1px solid rgba(120, 128, 140, 0.7) !important;
+    border-radius: 10px !important;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35) !important;
+    box-sizing: border-box !important;
+  }
 `;
 
 function createDynamicIcon(count) {
@@ -47,6 +102,30 @@ function createDynamicIcon(count) {
         buffer[idx + 1] = g;
         buffer[idx + 2] = b;
         buffer[idx + 3] = alpha;
+      }
+    }
+  }
+
+  return nativeImage.createFromBuffer(buffer, { width, height });
+}
+
+function createChatIcon(unreadCount = 0) {
+  const width = 16;
+  const height = 16;
+  const buffer = Buffer.alloc(width * height * 4);
+  const color = unreadCount > 0
+    ? { r: 0, g: 200, b: 83 }
+    : { r: 128, g: 128, b: 128 };
+
+  for (let y = 1; y < height - 1; y++) {
+    for (let x = 1; x < width - 1; x++) {
+      const edgeDistance = Math.min(x - 1, y - 1, width - 2 - x, height - 2 - y);
+      if (edgeDistance >= 0) {
+        const idx = (y * width + x) * 4;
+        buffer[idx] = color.r;
+        buffer[idx + 1] = color.g;
+        buffer[idx + 2] = color.b;
+        buffer[idx + 3] = 255;
       }
     }
   }
@@ -139,21 +218,22 @@ const domPollerScript = `
   }, 1000);
 `;
 
-async function enableMobileDeviceMode() {
-  const debuggerProtocol = mainWindow.webContents.debugger;
+const chatUnreadPollerScript = `
+  setInterval(() => {
+    const title = document.title || '';
+    const unreadBadge = document.querySelector('[aria-label*="unread" i], [data-unread="true"]');
+    const unreadCount = unreadBadge || /^\\(\\d+\\)/.test(title) ? 1 : 0;
+
+    if (window.electronAPI) window.electronAPI.sendChatUnreadCount(unreadCount);
+  }, 1000);
+`;
+
+async function enableMobileDeviceMode(window) {
+  const debuggerProtocol = window.webContents.debugger;
 
   try {
     debuggerProtocol.attach('1.3');
-    await debuggerProtocol.sendCommand('Emulation.setDeviceMetricsOverride', {
-      width: MOBILE_VIEWPORT.width,
-      height: MOBILE_VIEWPORT.height,
-      deviceScaleFactor: 2,
-      mobile: true,
-      screenWidth: MOBILE_VIEWPORT.width,
-      screenHeight: MOBILE_VIEWPORT.height,
-      positionX: 0,
-      positionY: 0
-    });
+    await updateMobileDeviceMetrics(window);
     await debuggerProtocol.sendCommand('Emulation.setTouchEmulationEnabled', {
       enabled: true,
       maxTouchPoints: 5
@@ -168,11 +248,32 @@ async function enableMobileDeviceMode() {
   }
 }
 
+async function updateMobileDeviceMetrics(window) {
+  if (!window || window.isDestroyed()) return;
+
+  const debuggerProtocol = window.webContents.debugger;
+  if (!debuggerProtocol.isAttached()) return;
+
+  const [width, height] = window.getContentSize();
+  await debuggerProtocol.sendCommand('Emulation.setDeviceMetricsOverride', {
+    width,
+    height,
+    deviceScaleFactor: 2,
+    mobile: true,
+    screenWidth: width,
+    screenHeight: height,
+    positionX: 0,
+    positionY: 0
+  });
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: MOBILE_VIEWPORT.width,
     height: MOBILE_VIEWPORT.height,
     useContentSize: true,
+    resizable: false,
+    frame: false,
     alwaysOnTop: true,
     show: false,
     autoHideMenuBar: true,
@@ -189,7 +290,7 @@ function createWindow() {
   mainWindow.webContents.setUserAgent(IPHONE_SE_USER_AGENT);
   mainWindow.loadURL('https://voice.google.com/');
   Promise.race([
-    enableMobileDeviceMode(),
+    enableMobileDeviceMode(mainWindow),
     new Promise((resolve) => setTimeout(resolve, 3000))
   ]).catch((error) => {
     console.warn('Mobile device emulation setup failed:', error.message);
@@ -206,28 +307,81 @@ function createWindow() {
       mainWindow.hide();
     }
   });
+
+  mainWindow.on('resize', () => {
+    updateMobileDeviceMetrics(mainWindow).catch((error) => {
+      console.warn('Mobile viewport resize failed:', error.message);
+    });
+  });
 }
 
-function positionWindowNearTray() {
-  if (!mainWindow || !messagesTray) return;
+function positionWindowNearTray(window, tray) {
+  if (!window || !tray) return;
 
-  const trayBounds = messagesTray.getBounds();
+  const trayBounds = tray.getBounds();
   const display = screen.getDisplayNearestPoint({
     x: trayBounds.x + Math.round(trayBounds.width / 2),
     y: trayBounds.y + Math.round(trayBounds.height / 2)
   });
   const workArea = display.workArea;
-  const [windowWidth, windowHeight] = mainWindow.getSize();
-  const x = workArea.x + workArea.width - windowWidth;
+  const [windowWidth, windowHeight] = window.getSize();
+  const x = Math.max(
+    workArea.x,
+    workArea.x + workArea.width - windowWidth - SCREEN_EDGE_CLEARANCE
+  );
   const y = Math.max(
     workArea.y,
     workArea.y + workArea.height - windowHeight - TASKBAR_CLEARANCE
   );
 
-  mainWindow.setPosition(x, y);
+  window.setPosition(x, y);
+}
+
+function createChatWindow() {
+  chatWindow = new BrowserWindow({
+    width: CHAT_VIEWPORT.width,
+    height: CHAT_VIEWPORT.height,
+    useContentSize: true,
+    resizable: false,
+    frame: false,
+    alwaysOnTop: true,
+    show: false,
+    autoHideMenuBar: true,
+    title: 'Google Chat',
+    icon: createDynamicIcon(0),
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, 'preload.js'),
+      partition: 'persist:google_chat_session'
+    }
+  });
+
+  chatWindow.webContents.setUserAgent(CHAT_DESKTOP_USER_AGENT);
+  chatWindow.loadURL('https://chat.google.com/');
+
+  chatWindow.webContents.on('did-finish-load', () => {
+    chatWindow.webContents.insertCSS(customCSS);
+  });
+
+  chatWindow.on('close', (event) => {
+    if (!app.isQuitting) {
+      event.preventDefault();
+      chatWindow.hide();
+    }
+  });
+
 }
 
 function createTray() {
+  [messagesTray, voicemailTray, chatTray].forEach((tray) => {
+    if (tray) tray.destroy();
+  });
+  messagesTray = undefined;
+  voicemailTray = undefined;
+  chatTray = undefined;
+  autoOpenMenuItems = [];
+
   const navigateScript = (tab) => `
     (() => {
       try {
@@ -265,27 +419,81 @@ function createTray() {
     void 0;
   `;
 
+  const showTab = (tab) => {
+    if (chatWindow && chatWindow.isVisible()) chatWindow.hide();
+    if (!mainWindow.isVisible()) positionWindowNearTray(mainWindow, messagesTray || voicemailTray);
+    mainWindow.show();
+    mainWindow.focus();
+    activeTab = tab;
+    mainWindow.webContents.executeJavaScript(navigateScript(tab));
+  };
+  showTabForAutoOpen = showTab;
+
   const openTab = (tab) => {
     if (mainWindow.isVisible() && activeTab === tab) {
       mainWindow.hide();
       return;
     }
 
-    if (!mainWindow.isVisible()) positionWindowNearTray();
-    mainWindow.show();
-    mainWindow.focus();
-    activeTab = tab;
-    mainWindow.webContents.executeJavaScript(navigateScript(tab));
+    showTab(tab);
   };
 
+  const toggleAutoOpen = (menuItem) => {
+    autoOpenEnabled = menuItem.checked;
+    saveSettings();
+    autoOpenMenuItems.forEach((item) => {
+      item.checked = autoOpenEnabled;
+    });
+  };
+
+  const toggleTray = (key, menuItem) => {
+    if (!menuItem.checked && enabledTrayCount() === 1) {
+      menuItem.checked = true;
+      return;
+    }
+
+    traySettings[key] = menuItem.checked;
+    saveSettings();
+    createTray();
+  };
+
+  const trayVisibilityItems = () => [
+    {
+      label: 'Google Voice icon',
+      type: 'checkbox',
+      checked: traySettings.voice,
+      click: (menuItem) => toggleTray('voice', menuItem)
+    },
+    {
+      label: 'Google Messages icon',
+      type: 'checkbox',
+      checked: traySettings.messages,
+      click: (menuItem) => toggleTray('messages', menuItem)
+    },
+    {
+      label: 'Google Chat icon',
+      type: 'checkbox',
+      checked: traySettings.chat,
+      click: (menuItem) => toggleTray('chat', menuItem)
+    }
+  ];
+
   // Messages Tray Icon
-  messagesTray = new Tray(createDynamicIcon(0));
+  if (traySettings.messages) messagesTray = new Tray(createDynamicIcon(0));
+  if (messagesTray) {
   messagesTray.setToolTip('Google Voice - Messages');
 
   const messagesMenu = Menu.buildFromTemplate([
     { label: 'Open Messages', click: () => {
       openTab('messages');
     }},
+    ...trayVisibilityItems(),
+    {
+      label: 'Auto-open on new messages',
+      type: 'checkbox',
+      checked: autoOpenEnabled,
+      click: toggleAutoOpen
+    },
     { type: 'separator' },
     { 
       label: 'Quit App', 
@@ -300,15 +508,25 @@ function createTray() {
   messagesTray.on('click', () => {
     openTab('messages');
   });
+  autoOpenMenuItems.push(messagesMenu.items.find((item) => item.label === 'Auto-open on new messages'));
+  }
 
   // Voicemail Tray Icon
-  voicemailTray = new Tray(createTriangleIcon(0));
+  if (traySettings.voice) voicemailTray = new Tray(createTriangleIcon(0));
+  if (voicemailTray) {
   voicemailTray.setToolTip('Google Voice - Voicemail');
 
   const voicemailMenu = Menu.buildFromTemplate([
     { label: 'Open Voicemail', click: () => {
       openTab('voicemail');
     }},
+    ...trayVisibilityItems(),
+    {
+      label: 'Auto-open on new messages',
+      type: 'checkbox',
+      checked: autoOpenEnabled,
+      click: toggleAutoOpen
+    },
     { type: 'separator' },
     { 
       label: 'Quit App', 
@@ -319,30 +537,109 @@ function createTray() {
     }
   ]);
 
+  autoOpenMenuItems.push(voicemailMenu.items.find((item) => item.label === 'Auto-open on new messages'));
   voicemailTray.setContextMenu(voicemailMenu);
   voicemailTray.on('click', () => {
     openTab('voicemail');
   });
+  }
+
+  const openChat = () => {
+    if (chatWindow.isVisible()) {
+      chatWindow.hide();
+      return;
+    }
+
+    if (mainWindow.isVisible()) mainWindow.hide();
+    positionWindowNearTray(chatWindow, chatTray);
+    chatWindow.show();
+    chatWindow.focus();
+  };
+
+  if (traySettings.chat) chatTray = new Tray(createChatIcon());
+  if (chatTray) {
+  chatTray.setToolTip('Google Chat');
+  chatTray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Open Google Chat', click: openChat },
+    ...trayVisibilityItems(),
+    { type: 'separator' },
+    {
+      label: 'Quit App',
+      click: () => {
+        app.isQuitting = true;
+        app.quit();
+      }
+    }
+  ]));
+  chatTray.on('click', openChat);
+  }
 }
 
 ipcMain.on('update-unread-counts', (event, messagesCount, voicemailCount) => {
-  if (!messagesTray || !voicemailTray) return;
+  const newMessagesReceived = messagesCount > 0 && previousMessagesCount === 0;
+  previousMessagesCount = messagesCount;
+  previousVoicemailCount = voicemailCount;
+
+  if (!unreadCountsInitialized) {
+    unreadCountsInitialized = true;
+  } else if (autoOpenEnabled && newMessagesReceived && showTabForAutoOpen) {
+    showTabForAutoOpen('messages');
+  }
 
   // Update Messages Icon
-  messagesTray.setImage(createDynamicIcon(messagesCount));
-  if (messagesCount > 0) {
-    messagesTray.setToolTip(`Google Voice - Messages: ${messagesCount} unread`);
-  } else {
-    messagesTray.setToolTip('Google Voice - Messages');
+  if (messagesTray) {
+    messagesTray.setImage(createDynamicIcon(messagesCount));
+    if (messagesCount > 0) {
+      messagesTray.setToolTip(`Google Voice - Messages: ${messagesCount} unread`);
+    } else {
+      messagesTray.setToolTip('Google Voice - Messages');
+    }
   }
 
   // Update Voicemail Icon
-  voicemailTray.setImage(createTriangleIcon(voicemailCount));
-  if (voicemailCount > 0) {
-    voicemailTray.setToolTip(`Google Voice - Voicemail: ${voicemailCount} unread`);
-  } else {
-    voicemailTray.setToolTip('Google Voice - Voicemail');
+  if (voicemailTray) {
+    voicemailTray.setImage(createTriangleIcon(voicemailCount));
+    if (voicemailCount > 0) {
+      voicemailTray.setToolTip(`Google Voice - Voicemail: ${voicemailCount} unread`);
+    } else {
+      voicemailTray.setToolTip('Google Voice - Voicemail');
+    }
   }
+});
+
+ipcMain.on('update-chat-unread-count', (event, unreadCount) => {
+  if (!chatTray) return;
+
+  chatTray.setImage(createChatIcon(unreadCount));
+  chatTray.setToolTip(unreadCount > 0 ? 'Google Chat: unread messages' : 'Google Chat');
+});
+
+ipcMain.on('top-resize-start', (event, screenY) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window || window.isDestroyed()) return;
+
+  const bounds = window.getBounds();
+  topResizeStates.set(window.id, {
+    startScreenY: screenY,
+    startY: bounds.y,
+    startHeight: bounds.height
+  });
+});
+
+ipcMain.on('top-resize-move', (event, screenY) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  const resizeState = window && topResizeStates.get(window.id);
+  if (!resizeState || window.isDestroyed()) return;
+
+  const delta = screenY - resizeState.startScreenY;
+  const height = Math.max(MIN_WINDOW_HEIGHT, resizeState.startHeight - delta);
+  const y = resizeState.startY + resizeState.startHeight - height;
+  window.setBounds({ y, height }, false);
+});
+
+ipcMain.on('top-resize-end', (event) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (window) topResizeStates.delete(window.id);
 });
 
 const gotTheLock = app.requestSingleInstanceLock();
@@ -358,7 +655,9 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(() => {
+    loadSettings();
     createWindow();
+    createChatWindow();
     createTray();
   });
 }

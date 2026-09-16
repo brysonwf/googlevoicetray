@@ -1,6 +1,6 @@
 {
   "name": "google-voice-tray",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Google Voice System Tray App",
   "main": "main.js",
   "scripts": {

@@ -1,19 +1,20 @@
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, screen } = require('electron');
 const path = require('path');
 
 let mainWindow;
 let messagesTray;
 let voicemailTray;
+let activeTab;
+
+const MOBILE_VIEWPORT = { width: 375, height: 667 };
+const TASKBAR_CLEARANCE = 8;
+const IPHONE_SE_USER_AGENT = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 
 // Custom CSS injected into Google Voice
 const customCSS = `
   /* Hide promo banners */
   .gv-promo-banner { display: none !important; }
 
-  /* Example: Custom sidebar background */
-  mat-nav-list {
-    background-color: #1a1c1e !important;
-  }
 `;
 
 function createDynamicIcon(count) {
@@ -138,10 +139,41 @@ const domPollerScript = `
   }, 1000);
 `;
 
+async function enableMobileDeviceMode() {
+  const debuggerProtocol = mainWindow.webContents.debugger;
+
+  try {
+    debuggerProtocol.attach('1.3');
+    await debuggerProtocol.sendCommand('Emulation.setDeviceMetricsOverride', {
+      width: MOBILE_VIEWPORT.width,
+      height: MOBILE_VIEWPORT.height,
+      deviceScaleFactor: 2,
+      mobile: true,
+      screenWidth: MOBILE_VIEWPORT.width,
+      screenHeight: MOBILE_VIEWPORT.height,
+      positionX: 0,
+      positionY: 0
+    });
+    await debuggerProtocol.sendCommand('Emulation.setTouchEmulationEnabled', {
+      enabled: true,
+      maxTouchPoints: 5
+    });
+    await debuggerProtocol.sendCommand('Emulation.setUserAgentOverride', {
+      userAgent: IPHONE_SE_USER_AGENT,
+      platform: 'iPhone'
+    });
+  } catch (error) {
+    console.warn('Mobile device emulation is unavailable; using the mobile viewport instead.', error.message);
+    if (debuggerProtocol.isAttached()) debuggerProtocol.detach();
+  }
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1050,
-    height: 750,
+    width: MOBILE_VIEWPORT.width,
+    height: MOBILE_VIEWPORT.height,
+    useContentSize: true,
+    alwaysOnTop: true,
     show: false,
     autoHideMenuBar: true,
     title: "Google Voice",
@@ -154,7 +186,14 @@ function createWindow() {
     }
   });
 
+  mainWindow.webContents.setUserAgent(IPHONE_SE_USER_AGENT);
   mainWindow.loadURL('https://voice.google.com/');
+  Promise.race([
+    enableMobileDeviceMode(),
+    new Promise((resolve) => setTimeout(resolve, 3000))
+  ]).catch((error) => {
+    console.warn('Mobile device emulation setup failed:', error.message);
+  });
 
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow.webContents.insertCSS(customCSS);
@@ -167,6 +206,29 @@ function createWindow() {
       mainWindow.hide();
     }
   });
+}
+
+function positionWindowNearTray() {
+  if (!mainWindow || !messagesTray) return;
+
+  const trayBounds = messagesTray.getBounds();
+  const display = screen.getDisplayNearestPoint({
+    x: trayBounds.x + Math.round(trayBounds.width / 2),
+    y: trayBounds.y + Math.round(trayBounds.height / 2)
+  });
+  const workArea = display.workArea;
+  const [windowWidth, windowHeight] = mainWindow.getSize();
+  const trayCenter = trayBounds.x + Math.round(trayBounds.width / 2);
+  const x = Math.max(
+    workArea.x,
+    Math.min(trayCenter - Math.round(windowWidth / 2), workArea.x + workArea.width - windowWidth)
+  );
+  const y = Math.max(
+    workArea.y,
+    workArea.y + workArea.height - windowHeight - TASKBAR_CLEARANCE
+  );
+
+  mainWindow.setPosition(x, y);
 }
 
 function createTray() {
@@ -207,15 +269,26 @@ function createTray() {
     void 0;
   `;
 
+  const openTab = (tab) => {
+    if (mainWindow.isVisible() && activeTab === tab) {
+      mainWindow.hide();
+      return;
+    }
+
+    if (!mainWindow.isVisible()) positionWindowNearTray();
+    mainWindow.show();
+    mainWindow.focus();
+    activeTab = tab;
+    mainWindow.webContents.executeJavaScript(navigateScript(tab));
+  };
+
   // Messages Tray Icon
   messagesTray = new Tray(createDynamicIcon(0));
   messagesTray.setToolTip('Google Voice - Messages');
 
   const messagesMenu = Menu.buildFromTemplate([
     { label: 'Open Messages', click: () => {
-      mainWindow.show();
-      mainWindow.focus();
-      mainWindow.webContents.executeJavaScript(navigateScript('messages'));
+      openTab('messages');
     }},
     { type: 'separator' },
     { 
@@ -229,9 +302,7 @@ function createTray() {
 
   messagesTray.setContextMenu(messagesMenu);
   messagesTray.on('click', () => {
-    mainWindow.show();
-    mainWindow.focus();
-    mainWindow.webContents.executeJavaScript(navigateScript('messages'));
+    openTab('messages');
   });
 
   // Voicemail Tray Icon
@@ -240,9 +311,7 @@ function createTray() {
 
   const voicemailMenu = Menu.buildFromTemplate([
     { label: 'Open Voicemail', click: () => {
-      mainWindow.show();
-      mainWindow.focus();
-      mainWindow.webContents.executeJavaScript(navigateScript('voicemail'));
+      openTab('voicemail');
     }},
     { type: 'separator' },
     { 
@@ -256,9 +325,7 @@ function createTray() {
 
   voicemailTray.setContextMenu(voicemailMenu);
   voicemailTray.on('click', () => {
-    mainWindow.show();
-    mainWindow.focus();
-    mainWindow.webContents.executeJavaScript(navigateScript('voicemail'));
+    openTab('voicemail');
   });
 }
 

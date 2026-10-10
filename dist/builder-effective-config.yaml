@@ -1,0 +1,28 @@
+directories:
+  output: dist
+  buildResources: build
+appId: com.googlevoice.trayapp
+productName: Google Voice Tray
+win:
+  target: portable
+portable:
+  artifactName: GoogleVoiceTray.exe
+mac:
+  target:
+    - dmg
+    - zip
+  category: public.app-category.utilities
+dmg:
+  artifactName: GoogleVoiceTray.dmg
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Utility
+appImage:
+  artifactName: GoogleVoiceTray.AppImage
+files:
+  - filter:
+      - main.js
+      - preload.js
+electronVersion: 30.5.1

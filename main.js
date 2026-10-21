@@ -70,6 +70,19 @@ const customCSS = `
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35) !important;
     box-sizing: border-box !important;
   }
+
+  /* Snap unread conversations to the top of the list: the list becomes a flex column and unread
+     threads get a negative order. Covers the thread-item component and plain list items, and the
+     ways Voice marks a thread unread (an .unread class or an "Unread" aria-label). Only rows the list
+     has rendered can move, which in practice is the recent ones. */
+  :is(gv-conversation-list, [role="list"], [role="listbox"], .cdk-virtual-scroll-content-wrapper):has(> :is(gv-thread-item, [role="listitem"], [role="option"])) {
+    display: flex !important;
+    flex-direction: column !important;
+  }
+  :is(gv-thread-item, [role="listitem"], [role="option"]):has(.unread, [aria-label^="unread" i], [aria-label*=" unread" i]),
+  :is(gv-thread-item, [role="listitem"], [role="option"]):is(.unread, [aria-label^="unread" i]) {
+    order: -1 !important;
+  }
 `;
 
 function createDynamicIcon(count) {

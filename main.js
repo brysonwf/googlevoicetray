@@ -245,9 +245,18 @@ const domPollerScript = `
 
 const chatUnreadPollerScript = `
   window.__gvtCheckUnread = () => {
+    // Chat always has an "Unread" filter switch and hidden "Mark as unread"
+    // menu buttons, so a bare "unread" match is always true (seen 2026-11-01
+    // with tools/inspect-unread.js). Count only labels that report unread
+    // items, e.g. "3 unread" or "unread messages".
     const title = document.title || '';
-    const unreadBadge = document.querySelector('[aria-label*="unread" i], [data-unread="true"]');
-    const unreadCount = unreadBadge || /^\\(\\d+\\)/.test(title) ? 1 : 0;
+    const isControl = /mark as unread|unread filter|^\\s*unread\\s*$/i;
+    const reportsUnread = /\\d+\\s+unread|unread\\s+(message|mention|conversation)/i;
+    const unreadBadge = [...document.querySelectorAll('[aria-label*="unread" i]')].some((el) => {
+      const label = el.getAttribute('aria-label') || '';
+      return !isControl.test(label) && reportsUnread.test(label);
+    });
+    const unreadCount = unreadBadge || /\\(\\d+\\)/.test(title) ? 1 : 0;
 
     if (window.electronAPI) window.electronAPI.sendChatUnreadCount(unreadCount);
   };

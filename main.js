@@ -200,8 +200,17 @@ function createTriangleIcon(count) {
   return nativeImage.createFromBuffer(buffer, { width, height });
 }
 
+// Each poller defines window.__gvtCheckUnread so a tray click can run a check
+// immediately (CHECK_UNREAD_SCRIPT) instead of waiting for the next tick.
+const CHECK_UNREAD_SCRIPT = 'window.__gvtCheckUnread && window.__gvtCheckUnread(); void 0;';
+
+function checkUnreadNow(window) {
+  if (!window || window.isDestroyed()) return;
+  window.webContents.executeJavaScript(CHECK_UNREAD_SCRIPT).catch(() => {});
+}
+
 const domPollerScript = `
-  setInterval(() => {
+  window.__gvtCheckUnread = () => {
     let messagesCount = 0;
     let voicemailCount = 0;
     
@@ -228,17 +237,23 @@ const domPollerScript = `
     if (window.electronAPI) {
       window.electronAPI.sendUnreadCounts(messagesCount, voicemailCount);
     }
-  }, 1000);
+  };
+  window.__gvtCheckUnread();
+  setInterval(window.__gvtCheckUnread, 1000);
+  void 0;
 `;
 
 const chatUnreadPollerScript = `
-  setInterval(() => {
+  window.__gvtCheckUnread = () => {
     const title = document.title || '';
     const unreadBadge = document.querySelector('[aria-label*="unread" i], [data-unread="true"]');
     const unreadCount = unreadBadge || /^\\(\\d+\\)/.test(title) ? 1 : 0;
 
     if (window.electronAPI) window.electronAPI.sendChatUnreadCount(unreadCount);
-  }, 1000);
+  };
+  window.__gvtCheckUnread();
+  setInterval(window.__gvtCheckUnread, 1000);
+  void 0;
 `;
 
 async function enableMobileDeviceMode(window) {
@@ -296,7 +311,10 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
-      partition: 'persist:google_voice_session'
+      partition: 'persist:google_voice_session',
+      // Keep the unread poller at full speed while the window is hidden;
+      // otherwise Chromium throttles it and the tray dot lags.
+      backgroundThrottling: false
     }
   });
 
@@ -366,7 +384,8 @@ function createChatWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
-      partition: 'persist:google_chat_session'
+      partition: 'persist:google_chat_session',
+      backgroundThrottling: false
     }
   });
 
@@ -375,6 +394,7 @@ function createChatWindow() {
 
   chatWindow.webContents.on('did-finish-load', () => {
     chatWindow.webContents.insertCSS(customCSS);
+    chatWindow.webContents.executeJavaScript(chatUnreadPollerScript);
   });
 
   chatWindow.on('close', (event) => {
@@ -443,6 +463,7 @@ function createTray() {
   showTabForAutoOpen = showTab;
 
   const openTab = (tab) => {
+    checkUnreadNow(mainWindow);
     if (mainWindow.isVisible() && activeTab === tab) {
       mainWindow.hide();
       return;
@@ -558,6 +579,7 @@ function createTray() {
   }
 
   const openChat = () => {
+    checkUnreadNow(chatWindow);
     if (chatWindow.isVisible()) {
       chatWindow.hide();
       return;

@@ -348,6 +348,10 @@ function createWindow() {
     }
   });
 
+  // Hiding it from the tray while an attachment has it enlarged brings it back
+  // normal-sized next time.
+  mainWindow.on('hide', () => restoreAfterAttachment(mainWindow));
+
   mainWindow.on('resize', () => {
     updateMobileDeviceMetrics(mainWindow).catch((error) => {
       console.warn('Mobile viewport resize failed:', error.message);
@@ -684,6 +688,51 @@ ipcMain.on('top-resize-move', (event, screenY) => {
 ipcMain.on('top-resize-end', (event) => {
   const window = BrowserWindow.fromWebContents(event.sender);
   if (window) topResizeStates.delete(window.id);
+});
+
+// Clicking a photo/video attachment grows the window to fit it (up to 95% of
+// the screen, centred); when the viewer closes, the window goes back to its
+// earlier size and spot. preload.js decides when a viewer is open.
+const attachmentRestoreBounds = new Map();
+
+ipcMain.on('attachment-open', (event, mediaWidth, mediaHeight) => {
+  const window = BrowserWindow.fromWebContents(event.sender);
+  if (!window || window.isDestroyed()) return;
+
+  const before = window.getBounds();
+  if (!attachmentRestoreBounds.has(window.id)) attachmentRestoreBounds.set(window.id, before);
+
+  const area = screen.getDisplayMatching(before).workArea;
+  const maxW = Math.round(area.width * 0.95);
+  const maxH = Math.round(area.height * 0.95);
+  // Fit the media's shape inside the screen; unknown sizes get the full 95%.
+  let width = maxW;
+  let height = maxH;
+  if (mediaWidth > 0 && mediaHeight > 0) {
+    const scale = Math.min(maxW / mediaWidth, maxH / mediaHeight);
+    width = Math.round(mediaWidth * scale);
+    height = Math.round(mediaHeight * scale);
+  }
+  width = Math.max(width, MOBILE_VIEWPORT.width);
+  height = Math.max(height, MOBILE_VIEWPORT.height);
+
+  window.setBounds({
+    x: area.x + Math.round((area.width - width) / 2),
+    y: area.y + Math.round((area.height - height) / 2),
+    width,
+    height
+  }, false);
+});
+
+function restoreAfterAttachment(window) {
+  if (!window || window.isDestroyed()) return;
+  const before = attachmentRestoreBounds.get(window.id);
+  attachmentRestoreBounds.delete(window.id);
+  if (before) window.setBounds(before, false);
+}
+
+ipcMain.on('attachment-close', (event) => {
+  restoreAfterAttachment(BrowserWindow.fromWebContents(event.sender));
 });
 
 const gotTheLock = app.requestSingleInstanceLock();

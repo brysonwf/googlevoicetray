@@ -1,0 +1,1 @@
+- would be cool if a click would force a check on unread messages so the green dot would go away faster
